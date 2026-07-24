@@ -14,7 +14,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for UI Styling
+# Custom CSS
 st.markdown("""
 <style>
     .main-title {
@@ -51,7 +51,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# 2. Safe Data Loading & Session State Setup
+# 2. Safe Data Loading & Persistence
 def load_data():
     if os.path.exists("budget_projects.csv"):
         p_df = pd.read_csv("budget_projects.csv")
@@ -75,7 +75,7 @@ def load_data():
     
     return p_df, c_df, e_df
 
-if "budget_projects" not in st.session_state or "expenses" not in st.session_state:
+if "budget_projects" not in st.session_state or "expenses" not in st.session_state or "categories" not in st.session_state:
     p, c, e = load_data()
     st.session_state["budget_projects"] = p
     st.session_state["categories"] = c
@@ -89,7 +89,30 @@ def save_data_to_csv():
     except Exception:
         pass
 
-# 3. Sidebar Navigation & Global Summary
+# 3. Helper Functions for Cascading Category Dropdowns
+def get_bimok_list():
+    c_df = st.session_state["categories"]
+    if not c_df.empty and "비목" in c_df.columns:
+        return c_df["비목"].dropna().unique().tolist()
+    return ["운영비", "인건비", "여비"]
+
+def get_bojo_bimok_list(selected_bimok):
+    c_df = st.session_state["categories"]
+    if not c_df.empty and "보조비목" in c_df.columns:
+        filtered = c_df[c_df["비목"] == selected_bimok]
+        if not filtered.empty:
+            return filtered["보조비목"].dropna().unique().tolist()
+    return ["일반수용비"]
+
+def get_bojo_semok_list(selected_bimok, selected_bojo_bimok):
+    c_df = st.session_state["categories"]
+    if not c_df.empty and "보조세목" in c_df.columns:
+        filtered = c_df[(c_df["비목"] == selected_bimok) & (c_df["보조비목"] == selected_bojo_bimok)]
+        if not filtered.empty:
+            return filtered["보조세목"].dropna().unique().tolist()
+    return ["일반수용비(3)"]
+
+# 4. Sidebar Navigation & Global Summary
 with st.sidebar:
     st.image("https://img.icons8.com/color/96/000000/analytics.png", width=50)
     st.markdown("## 🏛️ 예산 & 지출 관리")
@@ -122,14 +145,15 @@ with st.sidebar:
     st.caption(f"**종합 집행률:** {t_rate:.1f}%")
 
 st.markdown('<div class="main-title">공모과제 예산 & 지출 통합 관리 웹 시스템</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-title">모든 담당자가 웹에서 실시간으로 예산, 과제별 내역, 항목, 지출을 자유롭게 조회하고 수정할 수 있습니다.</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-title">모든 담당자가 웹에서 실시간으로 예산, 과제별 내역, 세목, 지출을 자유롭게 조회하고 수정할 수 있습니다.</div>', unsafe_allow_html=True)
 
 # ----------------------------------------------------
-# PAGE 1: 📊 통합 대시보드
+# PAGE 1: 📊 통합 대시보드 (과제 추가/삭제 및 수정 기능 내장)
 # ----------------------------------------------------
 if menu == "📊 통합 대시보드":
     st.subheader("📊 전체 예산 및 과제별 집행 현황")
     
+    # Key Summary Cards
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         st.metric("총 배정 예산액", f"₩{t_budget:,.0f}")
@@ -191,6 +215,78 @@ if menu == "📊 통합 대시보드":
             fig.update_layout(height=360, margin=dict(l=10, r=10, t=20, b=10))
             st.plotly_chart(fig, use_container_width=True)
 
+    # Dashboard Management Expander (Add, Delete, Edit Projects directly on Dashboard)
+    with st.expander("⚡ 대시보드에서 과제 직접 추가 / 삭제 / 예산 수정하기", expanded=False):
+        d_tab1, d_tab2, d_tab3 = st.tabs(["➕ 과제 신규 추가", "🗑️ 과제 삭제", "✏️ 예산 실시간 수정"])
+        
+        with d_tab1:
+            st.markdown("##### 📌 대시보드에서 바로 과제 추가")
+            with st.form("dash_add_proj_form", clear_on_submit=True):
+                ca, cb, cc = st.columns(3)
+                with ca:
+                    d_code = st.text_input("과제 코드 (예: 4-3-12)")
+                    d_name = st.text_input("과제 / 사업단명")
+                with cb:
+                    d_leader = st.text_input("과제 책임자")
+                    d_budget = st.number_input("배정 예산액 (원)", min_value=0, step=1000000, value=10000000)
+                with cc:
+                    d_note = st.text_area("비고 메모", height=108)
+                    
+                sub_d_proj = st.form_submit_button("🚀 과제 등록 완료")
+                if sub_d_proj:
+                    if not d_name or not d_code:
+                        st.error("과제 코드와 과제/사업단명은 필수입니다.")
+                    else:
+                        new_p = {
+                            "과제코드": d_code,
+                            "과제/사업단명": d_name,
+                            "책임자": d_leader,
+                            "배정예산액": int(d_budget),
+                            "비고": d_note
+                        }
+                        st.session_state["budget_projects"] = pd.concat([st.session_state["budget_projects"], pd.DataFrame([new_p])], ignore_index=True)
+                        save_data_to_csv()
+                        st.success(f"'{d_name}' 과제가 성공적으로 추가되었습니다!")
+                        st.rerun()
+
+        with d_tab2:
+            st.markdown("##### 🗑️ 등록된 과제 삭제")
+            p_options = st.session_state["budget_projects"]["과제/사업단명"].tolist() if not st.session_state["budget_projects"].empty else []
+            if not p_options:
+                st.info("삭제할 수 있는 과제가 없습니다.")
+            else:
+                del_p_name = st.selectbox("삭제할 과제/사업단 선택", p_options, key="dash_del_select")
+                del_exp_too = st.checkbox("해당 과제에 등록된 지출 내역도 함께 삭제하기", value=True)
+                
+                if st.button("🔴 선택한 과제 삭제하기", key="dash_btn_del_proj"):
+                    main_p = st.session_state["budget_projects"]
+                    st.session_state["budget_projects"] = main_p[main_p["과제/사업단명"] != del_p_name].reset_index(drop=True)
+                    
+                    if del_exp_too:
+                        main_e = st.session_state["expenses"]
+                        st.session_state["expenses"] = main_e[main_e["과제/사업단명"] != del_p_name].reset_index(drop=True)
+                        
+                    save_data_to_csv()
+                    st.success(f"'{del_p_name}' 과제가 성공적으로 삭제되었습니다!")
+                    st.rerun()
+
+        with d_tab3:
+            st.markdown("##### ✏️ 예산 편성표 실시간 수정")
+            edited_dash_proj = st.data_editor(
+                st.session_state["budget_projects"],
+                num_rows="dynamic",
+                use_container_width=True,
+                column_config={
+                    "배정예산액": st.column_config.NumberColumn("배정예산액(원)", format="₩%,d", step=100000)
+                },
+                key="dash_proj_editor"
+            )
+            if st.button("💾 대시보드 예산 수정사항 저장", key="dash_save_proj_btn"):
+                st.session_state["budget_projects"] = edited_dash_proj
+                save_data_to_csv()
+                st.success("예산 편성 정보가 반영되었습니다!")
+                st.rerun()
+
     st.divider()
     st.markdown("#### 🏷️ 비목별 지출 비율")
     if not e_df.empty and "비목" in e_df.columns:
@@ -206,7 +302,7 @@ if menu == "📊 통합 대시보드":
         st.plotly_chart(fig_pie, use_container_width=True)
 
 # ----------------------------------------------------
-# PAGE 2: 🔍 과제별 상세 관리 (신규 기능)
+# PAGE 2: 🔍 과제별 상세 관리
 # ----------------------------------------------------
 elif menu == "🔍 과제별 상세 관리":
     st.subheader("🔍 과제별 예산 & 지출 상세 관리")
@@ -253,12 +349,14 @@ elif menu == "🔍 과제별 상세 관리":
             if proj_exp.empty:
                 st.info("현재 등록된 지출 내역이 없습니다. '이 과제에 지출 추가' 탭에서 새 내역을 등록해보세요.")
             else:
+                bimoks = get_bimok_list()
                 edited_proj_exp = st.data_editor(
                     proj_exp,
                     num_rows="dynamic",
                     use_container_width=True,
                     column_config={
                         "지출액": st.column_config.NumberColumn("지출액(원)", min_value=0, step=1000, format="₩%,d"),
+                        "비목": st.column_config.SelectboxColumn("비목", options=bimoks),
                         "지급상태": st.column_config.SelectboxColumn("지급상태", options=["지급완료", "결재대기", "보완요청", "지급취소"])
                     },
                     key=f"editor_{selected_proj}"
@@ -274,21 +372,26 @@ elif menu == "🔍 과제별 상세 관리":
                     st.rerun()
 
         with p_tab2:
-            st.markdown(f"##### ➕ '{selected_proj}' 전용 지출 등록")
-            cat_df = st.session_state["categories"]
-            bimok_opts = cat_df["비목"].unique().tolist() if not cat_df.empty else ["운영비", "인건비", "여비"]
+            st.markdown(f"##### ➕ '{selected_proj}' 전용 지출 등록 (예산세목기준 연동)")
             
+            c_col1, c_col2, c_col3 = st.columns(3)
+            with c_col1:
+                p_bimok = st.selectbox("비목 (대분류)", options=get_bimok_list(), key=f"p_bimok_{selected_proj}")
+            with c_col2:
+                p_bojo_bimok_opts = get_bojo_bimok_list(p_bimok)
+                p_bojo_bimok = st.selectbox("보조비목 (중분류)", options=p_bojo_bimok_opts, key=f"p_bojo_{selected_proj}")
+            with c_col3:
+                p_bojo_semok_opts = get_bojo_semok_list(p_bimok, p_bojo_bimok)
+                p_bojo_semok = st.selectbox("보조세목 (소분류)", options=p_bojo_semok_opts, key=f"p_semok_{selected_proj}")
+                
             with st.form(key=f"form_add_{selected_proj}"):
                 fc1, fc2 = st.columns(2)
                 with fc1:
                     ins_date = st.date_input("지출일자", datetime.now())
-                    ins_bimok = st.selectbox("비목 (대분류)", bimok_opts)
-                    ins_sub = st.text_input("보조비목 (중분류)", value="일반수용비")
-                    ins_semok = st.text_input("보조세목 (소분류)", value="일반수용비(3)")
-                with fc2:
                     ins_amount = st.number_input("지출 금액 (원)", min_value=0, step=10000, value=50000)
-                    ins_desc = st.text_input("지출처 / 적요 내용", placeholder="예: 사업 관련 연구자문료 지급")
                     ins_status = st.selectbox("지급 상태", ["지급완료", "결재대기", "보완요청", "지급취소"])
+                with fc2:
+                    ins_desc = st.text_input("지출처 / 적요 내용", placeholder="예: 사업 관련 연구자문료 지급")
                     ins_note = st.text_input("비고", placeholder="예: 계좌이체 증빙")
                     
                 sub_btn = st.form_submit_button("🚀 이 과제에 지출 등록")
@@ -300,9 +403,9 @@ elif menu == "🔍 과제별 상세 관리":
                         "No": int(max_no) + 1,
                         "지출일자": str(ins_date),
                         "과제/사업단명": selected_proj,
-                        "비목": ins_bimok,
-                        "보조비목": ins_sub,
-                        "보조세목": ins_semok,
+                        "비목": p_bimok,
+                        "보조비목": p_bojo_bimok,
+                        "보조세목": p_bojo_semok,
                         "지출액": int(ins_amount),
                         "지출처/적요": ins_desc,
                         "지급상태": ins_status,
@@ -344,9 +447,9 @@ elif menu == "🔍 과제별 상세 관리":
 # ----------------------------------------------------
 elif menu == "💰 예산 편성 및 사업단 관리":
     st.subheader("💰 과제/사업단 등록 및 예산 배정 관리")
-    st.info("💡 새로운 세부과제/사업단을 등록하거나 전체 사업단의 예산액, 책임자, 과제명을 종합 수정할 수 있습니다.")
+    st.info("💡 새로운 세부과제/사업단을 등록하거나 전체 사업단의 예산액, 책임자, 과제명을 종합 수정 및 삭제할 수 있습니다.")
     
-    tab1, tab2 = st.tabs(["➕ 신규 과제/사업단 추가", "✏️ 전체 예산 편성표 종합 수정"])
+    tab1, tab2, tab3 = st.tabs(["➕ 신규 과제/사업단 추가", "✏️ 전체 예산 편성표 종합 수정", "🗑️ 과제 삭제"])
     
     with tab1:
         st.markdown("##### 📌 신규 공모과제 등록")
@@ -399,33 +502,58 @@ elif menu == "💰 예산 편성 및 사업단 관리":
             st.success("예산 편성 정보가 업데이트되었습니다!")
             st.rerun()
 
+    with tab3:
+        st.markdown("##### 🗑️ 과제/사업단 삭제")
+        p_opts = st.session_state["budget_projects"]["과제/사업단명"].tolist() if not st.session_state["budget_projects"].empty else []
+        if not p_opts:
+            st.info("삭제할 수 있는 과제가 없습니다.")
+        else:
+            del_target = st.selectbox("삭제할 과제/사업단 선택", p_opts, key="del_tab_select")
+            del_exp_flag = st.checkbox("해당 과제의 지출 내역도 함께 삭제하기", value=True, key="del_tab_check")
+            if st.button("🔴 과제 삭제 실행", key="btn_del_tab"):
+                main_p = st.session_state["budget_projects"]
+                st.session_state["budget_projects"] = main_p[main_p["과제/사업단명"] != del_target].reset_index(drop=True)
+                if del_exp_flag:
+                    main_e = st.session_state["expenses"]
+                    st.session_state["expenses"] = main_e[main_e["과제/사업단명"] != del_target].reset_index(drop=True)
+                save_data_to_csv()
+                st.success(f"'{del_target}' 과제가 정상적으로 삭제되었습니다.")
+                st.rerun()
+
 # ----------------------------------------------------
-# PAGE 4: 📝 지출 내역 입력 및 수정
+# PAGE 4: 📝 지출 내역 입력 및 수정 (예산세목기준 연동 완료)
 # ----------------------------------------------------
 elif menu == "📝 지출 내역 입력 및 수정":
     st.subheader("📝 전체 지출 내역 입력 및 통합 관리")
     
-    tab_exp1, tab_exp2 = st.tabs(["➕ 신규 지출 등록", "✏️ 전체 지출 내역 실시간 에디터"])
+    tab_exp1, tab_exp2 = st.tabs(["➕ 신규 지출 등록 (예산세목기준 연동)", "✏️ 전체 지출 내역 실시간 에디터"])
     
     proj_list = st.session_state["budget_projects"]["과제/사업단명"].tolist() if not st.session_state["budget_projects"].empty else ["선택가능 과제없음"]
-    cat_df = st.session_state["categories"]
-    bimok_list = cat_df["비목"].unique().tolist() if not cat_df.empty else ["운영비", "인건비", "여비"]
     
     with tab_exp1:
-        st.markdown("##### 📥 신규 지출 등록 폼")
+        st.markdown("##### 📥 신규 지출 등록 (예산세목 기준표 자동 연동)")
+        st.caption("비목을 선택하면 해당 비목에 속한 보조비목과 보조세목만 드롭다운에 자동으로 표시됩니다.")
+        
+        cat_c1, cat_c2, cat_c3 = st.columns(3)
+        with cat_c1:
+            sel_bimok = st.selectbox("비목 (대분류)", options=get_bimok_list(), key="main_sel_bimok")
+        with cat_c2:
+            bojo_bimok_opts = get_bojo_bimok_list(sel_bimok)
+            sel_bojo_bimok = st.selectbox("보조비목 (중분류)", options=bojo_bimok_opts, key="main_sel_bojo_bimok")
+        with cat_c3:
+            bojo_semok_opts = get_bojo_semok_list(sel_bimok, sel_bojo_bimok)
+            sel_bojo_semok = st.selectbox("보조세목 (소분류)", options=bojo_semok_opts, key="main_sel_bojo_semok")
+            
         with st.form("add_expense_form_main", clear_on_submit=True):
             col1, col2, col3 = st.columns(3)
             with col1:
                 e_date = st.date_input("지출 일자", datetime.now())
                 e_proj = st.selectbox("관련 과제/사업단", proj_list)
-                e_amount = st.number_input("지출 금액 (원)", min_value=0, step=10000, value=50000)
             with col2:
-                e_bimok = st.selectbox("비목 (대분류)", bimok_list)
-                e_sub_bimok = st.text_input("보조비목 (중분류)", value="일반수용비")
-                e_semok = st.text_input("보조세목 (소분류)", value="일반수용비(3)")
+                e_amount = st.number_input("지출 금액 (원)", min_value=0, step=10000, value=50000)
+                e_status = st.selectbox("지급 상태", ["지급완료", "결재대기", "보완요청", "지급취소"])
             with col3:
                 e_details = st.text_input("지출처 / 적요 내용", placeholder="예: 5월 실무협의회 회의비 결제")
-                e_status = st.selectbox("지급 상태", ["지급완료", "결재대기", "보완요청", "지급취소"])
                 e_notes = st.text_input("비고 (증빙 구분 등)", placeholder="예: 법인카드 / E나라도움")
                 
             submit_exp = st.form_submit_button("🚀 지출 내역 추가")
@@ -437,9 +565,9 @@ elif menu == "📝 지출 내역 입력 및 수정":
                     "No": int(max_no) + 1,
                     "지출일자": str(e_date),
                     "과제/사업단명": e_proj,
-                    "비목": e_bimok,
-                    "보조비목": e_sub_bimok,
-                    "보조세목": e_semok,
+                    "비목": sel_bimok,
+                    "보조비목": sel_bojo_bimok,
+                    "보조세목": sel_bojo_semok,
                     "지출액": int(e_amount),
                     "지출처/적요": e_details,
                     "지급상태": e_status,
@@ -466,6 +594,11 @@ elif menu == "📝 지출 내역 입력 및 수정":
         if filter_status:
             view_exp_df = view_exp_df[view_exp_df["지급상태"].isin(filter_status)]
             
+        all_bimoks = get_bimok_list()
+        c_df = st.session_state["categories"]
+        all_bojo_bimoks = c_df["보조비목"].dropna().unique().tolist() if not c_df.empty and "보조비목" in c_df.columns else ["일반수용비"]
+        all_bojo_semoks = c_df["보조세목"].dropna().unique().tolist() if not c_df.empty and "보조세목" in c_df.columns else ["일반수용비(3)"]
+        
         edited_exp_df = st.data_editor(
             view_exp_df,
             num_rows="dynamic",
@@ -473,6 +606,9 @@ elif menu == "📝 지출 내역 입력 및 수정":
             column_config={
                 "지출액": st.column_config.NumberColumn("지출액(원)", format="₩%,d", min_value=0, step=1000),
                 "과제/사업단명": st.column_config.SelectboxColumn("과제/사업단명", options=proj_list),
+                "비목": st.column_config.SelectboxColumn("비목", options=all_bimoks),
+                "보조비목": st.column_config.SelectboxColumn("보조비목", options=all_bojo_bimoks),
+                "보조세목": st.column_config.SelectboxColumn("보조세목", options=all_bojo_semoks),
                 "지급상태": st.column_config.SelectboxColumn("지급상태", options=["지급완료", "결재대기", "보완요청", "지급취소"])
             },
             key="exp_editor_main"
@@ -497,7 +633,7 @@ elif menu == "📝 지출 내역 입력 및 수정":
 # ----------------------------------------------------
 elif menu == "🏷️ 예산 세목 기준표 설정":
     st.subheader("🏷️ 비목 / 보조비목 / 보조세목 표준 관리")
-    st.info("💡 조직 내에서 사용할 예산 항목 체계를 설정합니다. 여기서 설정된 비목은 지출 입력 시 선택목록에 반영됩니다.")
+    st.info("💡 조직 내에서 사용할 예산 항목 체계를 설정합니다. 여기서 설정/수정된 비목, 보조비목, 보조세목은 지출 입력 선택목록에 100% 즉시 반영됩니다.")
     
     edited_cat_df = st.data_editor(
         st.session_state["categories"],
@@ -509,7 +645,7 @@ elif menu == "🏷️ 예산 세목 기준표 설정":
     if st.button("💾 비목 체계 저장"):
         st.session_state["categories"] = edited_cat_df
         save_data_to_csv()
-        st.success("비목 표준 기준표가 업데이트되었습니다!")
+        st.success("비목 표준 기준표가 성공적으로 업데이트되었습니다! 이제 지출 입력 시 반영됩니다.")
         st.rerun()
 
 # ----------------------------------------------------
