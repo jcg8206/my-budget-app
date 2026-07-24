@@ -14,7 +14,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom Professional Styling
+# Custom Styling
 st.markdown("""
 <style>
     .main-title {
@@ -51,17 +51,27 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# 2. Data Cleaning & Synchronization Functions
+# 2. Key-Error Proof Helper Functions
+def safe_get_columns(df, required_cols, default_values=None):
+    """Guarantees that a DataFrame contains all required columns with proper default values."""
+    if df is None or not isinstance(df, pd.DataFrame):
+        df = pd.DataFrame()
+    df = df.copy()
+    if default_values is None:
+        default_values = {}
+    for col in required_cols:
+        if col not in df.columns:
+            def_val = default_values.get(col, "" if col not in ["배정예산액", "지출액", "잔액"] else 0)
+            df[col] = def_val
+    return df[required_cols]
+
 def clean_budget_projects(df):
-    if df is None or df.empty:
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
         return pd.DataFrame(columns=["과제코드", "과제/사업단명", "책임자", "배정예산액", "비고"])
     
     df = df.copy()
     expected_cols = ["과제코드", "과제/사업단명", "책임자", "배정예산액", "비고"]
-    
-    for col in expected_cols:
-        if col not in df.columns:
-            df[col] = "" if col != "배정예산액" else 0
+    df = safe_get_columns(df, expected_cols)
             
     df["과제코드"] = df["과제코드"].fillna("").astype(str).str.strip()
     df["과제/사업단명"] = df["과제/사업단명"].fillna("").astype(str).str.strip()
@@ -69,7 +79,6 @@ def clean_budget_projects(df):
     df["배정예산액"] = pd.to_numeric(df["배정예산액"], errors="coerce").fillna(0).astype(int)
     df["비고"] = df["비고"].fillna("").astype(str).str.strip()
     
-    # Retain rows that have at least one field filled out
     has_content = (
         (df["과제코드"] != "") | 
         (df["과제/사업단명"] != "") | 
@@ -81,24 +90,27 @@ def clean_budget_projects(df):
     return df[expected_cols]
 
 def clean_categories(df):
-    if df is None or df.empty:
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
         return pd.DataFrame(columns=["비목", "보조비목", "보조세목", "설명"])
     df = df.copy()
+    expected_cols = ["비목", "보조비목", "보조세목", "설명"]
+    df = safe_get_columns(df, expected_cols)
+    
     df["비목"] = df["비목"].fillna("").astype(str).str.strip()
     df["보조비목"] = df["보조비목"].fillna("").astype(str).str.strip()
     df["보조세목"] = df["보조세목"].fillna("").astype(str).str.strip()
     df["설명"] = df["설명"].fillna("").astype(str).str.strip()
     df = df[(df["비목"] != "") | (df["보조비목"] != "") | (df["보조세목"] != "")].reset_index(drop=True)
-    return df
+    return df[expected_cols]
 
 def clean_expenses(df):
-    if df is None or df.empty:
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
         return pd.DataFrame(columns=["No", "지출일자", "과제/사업단명", "비목", "보조비목", "보조세목", "지출액", "지출처/적요", "지급상태", "비고"])
     df = df.copy()
-    if "No" in df.columns:
-        df["No"] = pd.to_numeric(df["No"], errors="coerce").fillna(1).astype(int)
-    else:
-        df["No"] = range(1, len(df) + 1)
+    expected_cols = ["No", "지출일자", "과제/사업단명", "비목", "보조비목", "보조세목", "지출액", "지출처/적요", "지급상태", "비고"]
+    df = safe_get_columns(df, expected_cols)
+    
+    df["No"] = pd.to_numeric(df["No"], errors="coerce").fillna(1).astype(int)
     df["지출일자"] = df["지출일자"].fillna(str(datetime.now().date())).astype(str).str.strip()
     df["과제/사업단명"] = df["과제/사업단명"].fillna("").astype(str).str.strip()
     df["비목"] = df["비목"].fillna("").astype(str).str.strip()
@@ -109,18 +121,15 @@ def clean_expenses(df):
     df["지급상태"] = df["지급상태"].fillna("지급완료").astype(str).str.strip()
     df["비고"] = df["비고"].fillna("").astype(str).str.strip()
     df = df[df["과제/사업단명"] != ""].reset_index(drop=True)
-    return df
+    return df[expected_cols]
 
 def clean_budget_details(df):
-    if df is None or df.empty:
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
         return pd.DataFrame(columns=["과제/사업단명", "비목", "보조비목", "보조세목", "배정예산액", "비고"])
     
     df = df.copy()
     expected_cols = ["과제/사업단명", "비목", "보조비목", "보조세목", "배정예산액", "비고"]
-    
-    for col in expected_cols:
-        if col not in df.columns:
-            df[col] = "" if col != "배정예산액" else 0
+    df = safe_get_columns(df, expected_cols)
             
     df["과제/사업단명"] = df["과제/사업단명"].fillna("").astype(str).str.strip()
     df["비목"] = df["비목"].fillna("").astype(str).str.strip()
@@ -140,10 +149,13 @@ def clean_budget_details(df):
 def sync_project_budgets_from_details(p_df, bd_df):
     """Sync project total budget with the sum of detailed category budgets if available."""
     p_df = p_df.copy()
-    if bd_df.empty:
+    if bd_df is None or bd_df.empty:
         return p_df
     
     bd_clean = clean_budget_details(bd_df)
+    if bd_clean.empty:
+        return p_df
+        
     cat_sums = bd_clean.groupby("과제/사업단명")["배정예산액"].sum().reset_index()
     
     for idx, row in cat_sums.iterrows():
@@ -155,7 +167,7 @@ def sync_project_budgets_from_details(p_df, bd_df):
             
     return p_df
 
-# Data Loader with Auto-Recovery
+# Safe Data Loader
 def load_data():
     if os.path.exists("budget_projects.csv"):
         p_df = pd.read_csv("budget_projects.csv")
@@ -219,7 +231,7 @@ def save_and_sync_all():
     except Exception:
         pass
 
-# Category Dropdown Generators
+# Category Dropdown Generators from Categories Master Table
 def get_bimok_list():
     c_df = st.session_state["categories"]
     if not c_df.empty and "비목" in c_df.columns:
@@ -317,7 +329,7 @@ if st.session_state["menu_selection"] == "📊 통합 대시보드":
     e_df = st.session_state["expenses"].copy()
     bd_df = st.session_state["budget_details"].copy()
     
-    exp_summary = e_df.groupby("과제/사업단명")["지출액"].sum().reset_index() if not e_df.empty else pd.DataFrame(columns=["과제/사업단명", "지출액"])
+    exp_summary = e_df.groupby("과제/사업단명")["지출액"].sum().reset_index() if (not e_df.empty and "과제/사업단명" in e_df.columns and "지출액" in e_df.columns) else pd.DataFrame(columns=["과제/사업단명", "지출액"])
     dash_df = pd.merge(p_df, exp_summary, on="과제/사업단명", how="left").fillna({"지출액": 0})
     dash_df["지출액"] = dash_df["지출액"].astype(int)
     dash_df["잔액"] = dash_df["배정예산액"] - dash_df["지출액"]
@@ -337,8 +349,9 @@ if st.session_state["menu_selection"] == "📊 통합 대시보드":
     
     with col_l:
         st.markdown("#### 🏢 과제/사업단별 집행 현황")
+        view_dash = safe_get_columns(dash_df, ["과제코드", "과제/사업단명", "책임자", "배정예산액", "지출액", "잔액", "집행률(%)", "상태"])
         st.dataframe(
-            dash_df[["과제코드", "과제/사업단명", "책임자", "배정예산액", "지출액", "잔액", "집행률(%)", "상태"]],
+            view_dash,
             use_container_width=True,
             column_config={
                 "배정예산액": st.column_config.NumberColumn("배정예산", format="₩%,d"),
@@ -381,8 +394,15 @@ if st.session_state["menu_selection"] == "📊 통합 대시보드":
     st.divider()
     st.markdown("#### 🏷️ 전체 비목/보조비목/보조세목별 예산 편성 vs 지출 집행 통합 현황")
     
-    global_bd_sum = bd_df.groupby(["비목", "보조비목", "보조세목"])["배정예산액"].sum().reset_index() if not bd_df.empty else pd.DataFrame(columns=["비목", "보조비목", "보조세목", "배정예산액"])
-    global_exp_sum = e_df.groupby(["비목", "보조비목", "보조세목"])["지출액"].sum().reset_index() if not e_df.empty else pd.DataFrame(columns=["비목", "보조비목", "보조세목", "지출액"])
+    if not bd_df.empty and all(c in bd_df.columns for c in ["비목", "보조비목", "보조세목", "배정예산액"]):
+        global_bd_sum = bd_df.groupby(["비목", "보조비목", "보조세목"])["배정예산액"].sum().reset_index()
+    else:
+        global_bd_sum = pd.DataFrame(columns=["비목", "보조비목", "보조세목", "배정예산액"])
+        
+    if not e_df.empty and all(c in e_df.columns for c in ["비목", "보조비목", "보조세목", "지출액"]):
+        global_exp_sum = e_df.groupby(["비목", "보조비목", "보조세목"])["지출액"].sum().reset_index()
+    else:
+        global_exp_sum = pd.DataFrame(columns=["비목", "보조비목", "보조세목", "지출액"])
     
     global_cat_merged = pd.merge(
         global_bd_sum,
@@ -391,16 +411,17 @@ if st.session_state["menu_selection"] == "📊 통합 대시보드":
         how="outer"
     ).fillna({"배정예산액": 0, "지출액": 0})
     
-    global_cat_merged["배정예산액"] = global_cat_merged["배정예산액"].astype(int)
-    global_cat_merged["지출액"] = global_cat_merged["지출액"].astype(int)
+    global_cat_merged["배정예산액"] = pd.to_numeric(global_cat_merged["배정예산액"], errors="coerce").fillna(0).astype(int)
+    global_cat_merged["지출액"] = pd.to_numeric(global_cat_merged["지출액"], errors="coerce").fillna(0).astype(int)
     global_cat_merged["잔액"] = global_cat_merged["배정예산액"] - global_cat_merged["지출액"]
     global_cat_merged["집행률(%)"] = np.where(global_cat_merged["배정예산액"] > 0, (global_cat_merged["지출액"] / global_cat_merged["배정예산액"] * 100).round(1), 0.0)
     
     col_cat_t, col_cat_c = st.columns([1.1, 0.9])
     
     with col_cat_t:
+        view_global_cat = safe_get_columns(global_cat_merged, ["비목", "보조비목", "보조세목", "배정예산액", "지출액", "잔액", "집행률(%)"])
         st.dataframe(
-            global_cat_merged,
+            view_global_cat,
             use_container_width=True,
             column_config={
                 "배정예산액": st.column_config.NumberColumn("총 편성예산", format="₩%,d"),
@@ -498,7 +519,7 @@ if st.session_state["menu_selection"] == "📊 통합 대시보드":
                 st.rerun()
 
 # ----------------------------------------------------
-# PAGE 2: 🔍 과제별 상세 관리 (Error-Free split structure)
+# PAGE 2: 🔍 과제별 상세 관리 (100% KeyError Proof)
 # ----------------------------------------------------
 elif st.session_state["menu_selection"] == "🔍 과제별 상세 관리":
     st.subheader("🔍 과제별 예산 & 지출 상세 관리")
@@ -525,7 +546,7 @@ elif st.session_state["menu_selection"] == "🔍 과제별 상세 관리":
         proj_note = str(proj_info.get("비고", ""))
         
         proj_exp = e_df[e_df["과제/사업단명"] == selected_proj].copy() if not e_df.empty else pd.DataFrame()
-        spent_total = int(proj_exp["지출액"].sum()) if not proj_exp.empty else 0
+        spent_total = int(proj_exp["지출액"].sum()) if (not proj_exp.empty and "지출액" in proj_exp.columns) else 0
         balance = proj_budget - spent_total
         rate = (spent_total / proj_budget * 100) if proj_budget > 0 else 0.0
         
@@ -558,24 +579,31 @@ elif st.session_state["menu_selection"] == "🔍 과제별 상세 관리":
             st.caption("비목/세목별로 예산 배정액을 설정하세요. 세목 예산의 총합이 과제의 전체 예산으로 자동 합산 반영됩니다.")
             
             proj_bd = bd_df[bd_df["과제/사업단명"] == selected_proj].copy() if not bd_df.empty else pd.DataFrame()
-            proj_exp_cat_sum = proj_exp.groupby(["비목", "보조비목", "보조세목"])["지출액"].sum().reset_index() if not proj_exp.empty else pd.DataFrame(columns=["비목", "보조비목", "보조세목", "지출액"])
+            
+            if not proj_exp.empty and all(c in proj_exp.columns for c in ["비목", "보조비목", "보조세목", "지출액"]):
+                proj_exp_cat_sum = proj_exp.groupby(["비목", "보조비목", "보조세목"])["지출액"].sum().reset_index()
+            else:
+                proj_exp_cat_sum = pd.DataFrame(columns=["비목", "보조비목", "보조세목", "지출액"])
+            
+            proj_bd_sub = safe_get_columns(proj_bd, ["비목", "보조비목", "보조세목", "배정예산액", "비고"])
             
             # Read-only Overview Table
             merged_cat_proj = pd.merge(
-                proj_bd[["비목", "보조비목", "보조세목", "배정예산액", "비고"]],
+                proj_bd_sub,
                 proj_exp_cat_sum,
                 on=["비목", "보조비목", "보조세목"],
                 how="outer"
             ).fillna({"배정예산액": 0, "지출액": 0, "비고": ""})
             
-            merged_cat_proj["배정예산액"] = merged_cat_proj["배정예산액"].astype(int)
-            merged_cat_proj["지출액"] = merged_cat_proj["지출액"].astype(int)
+            merged_cat_proj["배정예산액"] = pd.to_numeric(merged_cat_proj["배정예산액"], errors="coerce").fillna(0).astype(int)
+            merged_cat_proj["지출액"] = pd.to_numeric(merged_cat_proj["지출액"], errors="coerce").fillna(0).astype(int)
             merged_cat_proj["잔액"] = merged_cat_proj["배정예산액"] - merged_cat_proj["지출액"]
             merged_cat_proj["집행률(%)"] = np.where(merged_cat_proj["배정예산액"] > 0, (merged_cat_proj["지출액"] / merged_cat_proj["배정예산액"] * 100).round(1), 0.0)
             
             st.markdown("###### 🔍 [조회] 세목별 예산 대비 지출 현황")
+            view_summary_cat = safe_get_columns(merged_cat_proj, ["비목", "보조비목", "보조세목", "배정예산액", "지출액", "잔액", "집행률(%)", "비고"])
             st.dataframe(
-                merged_cat_proj[["비목", "보조비목", "보조세목", "배정예산액", "지출액", "잔액", "집행률(%)", "비고"]],
+                view_summary_cat,
                 use_container_width=True,
                 column_config={
                     "배정예산액": st.column_config.NumberColumn("배정예산액", format="₩%,d"),
@@ -595,7 +623,7 @@ elif st.session_state["menu_selection"] == "🔍 과제별 상세 관리":
             all_bojo_bimoks = c_df["보조비목"].dropna().unique().tolist() if not c_df.empty and "보조비목" in c_df.columns else ["일반수용비"]
             all_bojo_semoks = c_df["보조세목"].dropna().unique().tolist() if not c_df.empty and "보조세목" in c_df.columns else ["일반수용비(3)"]
             
-            editable_bd = proj_bd[["비목", "보조비목", "보조세목", "배정예산액", "비고"]].copy() if not proj_bd.empty else pd.DataFrame(columns=["비목", "보조비목", "보조세목", "배정예산액", "비고"])
+            editable_bd = safe_get_columns(proj_bd, ["비목", "보조비목", "보조세목", "배정예산액", "비고"])
             
             edited_bd_proj = st.data_editor(
                 editable_bd,
@@ -612,10 +640,16 @@ elif st.session_state["menu_selection"] == "🔍 과제별 상세 관리":
             )
             
             if st.button("💾 이 과제의 세목별 예산 편성 저장", key="btn_save_proj_bd"):
-                edited_bd_proj["과제/사업단명"] = selected_proj
+                edited_clean = clean_budget_details(edited_bd_proj)
+                edited_clean["과제/사업단명"] = selected_proj
+                
                 main_bd = st.session_state["budget_details"].copy()
-                main_bd = main_bd[main_bd["과제/사업단명"] != selected_proj]
-                main_bd = pd.concat([main_bd, edited_bd_proj[["과제/사업단명", "비목", "보조비목", "보조세목", "배정예산액", "비고"]]], ignore_index=True)
+                if not main_bd.empty and "과제/사업단명" in main_bd.columns:
+                    main_bd = main_bd[main_bd["과제/사업단명"] != selected_proj]
+                else:
+                    main_bd = pd.DataFrame(columns=["과제/사업단명", "비목", "보조비목", "보조세목", "배정예산액", "비고"])
+                    
+                main_bd = pd.concat([main_bd, edited_clean], ignore_index=True)
                 
                 st.session_state["budget_details"] = main_bd
                 save_and_sync_all()
@@ -662,7 +696,9 @@ elif st.session_state["menu_selection"] == "🔍 과제별 상세 관리":
             st.markdown(f"##### 📝 '{selected_proj}' 지출 내역 (실시간 수정 & 삭제 가능)")
             st.caption("아래 표에서 직접 금액, 비목, 적요, 지급상태 등을 수정하거나 행을 추가/삭제할 수 있습니다.")
             
-            if proj_exp.empty:
+            view_proj_exp = safe_get_columns(proj_exp, ["No", "지출일자", "비목", "보조비목", "보조세목", "지출액", "지출처/적요", "지급상태", "비고"])
+            
+            if view_proj_exp.empty:
                 st.info("현재 등록된 지출 내역이 없습니다. '이 과제에 지출 추가' 탭에서 새 내역을 등록해보세요.")
             else:
                 bimoks = get_bimok_list()
@@ -671,7 +707,7 @@ elif st.session_state["menu_selection"] == "🔍 과제별 상세 관리":
                 all_bojo_semoks = c_df["보조세목"].dropna().unique().tolist() if not c_df.empty and "보조세목" in c_df.columns else ["일반수용비(3)"]
                 
                 edited_proj_exp = st.data_editor(
-                    proj_exp,
+                    view_proj_exp,
                     num_rows="dynamic",
                     use_container_width=True,
                     column_config={
@@ -685,10 +721,16 @@ elif st.session_state["menu_selection"] == "🔍 과제별 상세 관리":
                 )
                 
                 if st.button("💾 이 과제 지출 내역 저장", key="btn_save_proj_exp"):
-                    edited_proj_exp["과제/사업단명"] = selected_proj
+                    edited_clean_exp = clean_expenses(edited_proj_exp)
+                    edited_clean_exp["과제/사업단명"] = selected_proj
+                    
                     main_e = st.session_state["expenses"].copy()
-                    main_e = main_e[main_e["과제/사업단명"] != selected_proj]
-                    main_e = pd.concat([main_e, edited_proj_exp], ignore_index=True)
+                    if not main_e.empty and "과제/사업단명" in main_e.columns:
+                        main_e = main_e[main_e["과제/사업단명"] != selected_proj]
+                    else:
+                        main_e = pd.DataFrame(columns=["No", "지출일자", "과제/사업단명", "비목", "보조비목", "보조세목", "지출액", "지출처/적요", "지급상태", "비고"])
+                        
+                    main_e = pd.concat([main_e, edited_clean_exp], ignore_index=True)
                     st.session_state["expenses"] = main_e
                     save_and_sync_all()
                     st.success("해당 과제의 지출 내역이 성공적으로 저장되었습니다!")
@@ -722,7 +764,7 @@ elif st.session_state["menu_selection"] == "🔍 과제별 상세 관리":
                 
                 if sub_btn:
                     main_e = st.session_state["expenses"].copy()
-                    max_no = main_e["No"].max() if not main_e.empty else 0
+                    max_no = main_e["No"].max() if (not main_e.empty and "No" in main_e.columns) else 0
                     new_row = {
                         "No": int(max_no) + 1,
                         "지출일자": str(ins_date),
@@ -766,14 +808,15 @@ elif st.session_state["menu_selection"] == "🔍 과제별 상세 관리":
                         main_p.loc[idx[0], "비고"] = new_note
                         
                         if new_name != selected_proj:
-                            # Update name in expenses & budget_details
                             main_e = st.session_state["expenses"].copy()
-                            main_e.loc[main_e["과제/사업단명"] == selected_proj, "과제/사업단명"] = new_name
-                            st.session_state["expenses"] = main_e
+                            if not main_e.empty and "과제/사업단명" in main_e.columns:
+                                main_e.loc[main_e["과제/사업단명"] == selected_proj, "과제/사업단명"] = new_name
+                                st.session_state["expenses"] = main_e
                             
                             main_bd = st.session_state["budget_details"].copy()
-                            main_bd.loc[main_bd["과제/사업단명"] == selected_proj, "과제/사업단명"] = new_name
-                            st.session_state["budget_details"] = main_bd
+                            if not main_bd.empty and "과제/사업단명" in main_bd.columns:
+                                main_bd.loc[main_bd["과제/사업단명"] == selected_proj, "과제/사업단명"] = new_name
+                                st.session_state["budget_details"] = main_bd
                             
                             st.session_state["selected_project_nav"] = new_name
                             
@@ -901,7 +944,7 @@ elif st.session_state["menu_selection"] == "📝 지출 내역 입력 및 수정
             
             if submit_exp:
                 main_e = st.session_state["expenses"].copy()
-                max_no = main_e["No"].max() if not main_e.empty else 0
+                max_no = main_e["No"].max() if (not main_e.empty and "No" in main_e.columns) else 0
                 new_exp = {
                     "No": int(max_no) + 1,
                     "지출일자": str(e_date),
@@ -934,6 +977,8 @@ elif st.session_state["menu_selection"] == "📝 지출 내역 입력 및 수정
             view_exp_df = view_exp_df[view_exp_df["과제/사업단명"].isin(filter_proj)]
         if filter_status:
             view_exp_df = view_exp_df[view_exp_df["지급상태"].isin(filter_status)]
+            
+        view_exp_df = safe_get_columns(view_exp_df, ["No", "지출일자", "과제/사업단명", "비목", "보조비목", "보조세목", "지출액", "지출처/적요", "지급상태", "비고"])
             
         all_bimoks = get_bimok_list()
         c_df = st.session_state["categories"]
@@ -981,8 +1026,10 @@ elif st.session_state["menu_selection"] == "🏷️ 예산 세목 기준표 설�
     st.subheader("🏷️ 비목 / 보조비목 / 보조세목 표준 관리")
     st.info("💡 조직 내에서 사용할 예산 항목 체계를 설정합니다. 여기서 설정/수정된 비목, 보조비목, 보조세목은 지출 입력 선택목록에 100% 즉시 반영됩니다.")
     
+    view_cat_df = safe_get_columns(st.session_state["categories"], ["비목", "보조비목", "보조세목", "설명"])
+    
     edited_cat_df = st.data_editor(
-        st.session_state["categories"],
+        view_cat_df,
         num_rows="dynamic",
         use_container_width=True,
         key="cat_editor_main"
