@@ -68,7 +68,7 @@ def safe_get_columns(df, required_cols, default_values=None):
         default_values = {}
     for col in required_cols:
         if col not in df.columns:
-            def_val = default_values.get(col, "" if col not in ["배정예산액", "지출액", "잔액", "No"] else 0)
+            def_val = default_values.get(col, "" if col not in ["배정예산액", "지출액", "잔액"] else 0)
             df[col] = def_val
     return df[required_cols]
 
@@ -118,7 +118,6 @@ def clean_expenses(df):
     df = safe_get_columns(df, expected_cols)
     
     df["No"] = pd.to_numeric(df["No"], errors="coerce").fillna(0).astype(int)
-    # Assign sequential No if missing or 0
     max_existing_no = df["No"].max() if not df.empty else 0
     if max_existing_no <= 0:
         max_existing_no = 0
@@ -327,36 +326,35 @@ def save_and_sync_all():
     except Exception:
         pass
 
-# Category Dropdown Generators
+# Category Dropdown Generators from Categories Master Table (Strictly filtered by master table)
 def get_bimok_list():
     c_df = st.session_state["categories"]
     if not c_df.empty and "비목" in c_df.columns:
-        opts = [x for x in c_df["비목"].unique().tolist() if str(x).strip() != ""]
+        opts = [x for x in c_df["비목"].dropna().unique().tolist() if str(x).strip() != ""]
         if opts:
             return opts
     return ["운영비", "인건비", "여비"]
 
 def get_bojo_bimok_list(selected_bimok):
     c_df = st.session_state["categories"]
-    if not c_df.empty and "보조비목" in c_df.columns:
+    if not c_df.empty and all(c in c_df.columns for c in ["비목", "보조비목"]):
         filtered = c_df[c_df["비목"] == selected_bimok]
         if not filtered.empty:
-            opts = [x for x in filtered["보조비목"].unique().tolist() if str(x).strip() != ""]
+            opts = [x for x in filtered["보조비목"].dropna().unique().tolist() if str(x).strip() != ""]
             if opts:
                 return opts
     return ["일반수용비"]
 
 def get_bojo_semok_list(selected_bimok, selected_bojo_bimok):
     c_df = st.session_state["categories"]
-    if not c_df.empty and "보조세목" in c_df.columns:
+    if not c_df.empty and all(c in c_df.columns for c in ["비목", "보조비목", "보조세목"]):
         filtered = c_df[(c_df["비목"] == selected_bimok) & (c_df["보조비목"] == selected_bojo_bimok)]
         if not filtered.empty:
-            opts = [x for x in filtered["보조세목"].unique().tolist() if str(x).strip() != ""]
+            opts = [x for x in filtered["보조세목"].dropna().unique().tolist() if str(x).strip() != ""]
             if opts:
                 return opts
     return ["일반수용비(3)"]
 
-# Reusable Column Configurations
 proj_column_config = {
     "과제코드": st.column_config.TextColumn("과제코드", help="예: 4-3-12", disabled=False),
     "과제/사업단명": st.column_config.TextColumn("과제/사업단명", help="과제 또는 사업단 명칭", disabled=False),
@@ -457,7 +455,6 @@ if st.session_state["menu_selection"] == "📊 통합 대시보드":
             hide_index=True
         )
         
-        # Quick Jump
         st.markdown("##### 🔍 선택한 과제 상세페이지로 즉시 이동")
         p_list_dash = dash_df["과제/사업단명"].tolist() if not dash_df.empty else []
         if p_list_dash:
@@ -485,7 +482,6 @@ if st.session_state["menu_selection"] == "📊 통합 대시보드":
             fig.update_layout(height=380, margin=dict(l=10, r=10, t=20, b=10))
             st.plotly_chart(fig, use_container_width=True)
 
-    # Global Category-Level Summary
     st.divider()
     st.markdown("#### 🏷️ 전체 비목/보조비목/보조세목별 예산 편성 vs 지출 집행 통합 현황")
     
@@ -540,7 +536,6 @@ if st.session_state["menu_selection"] == "📊 통합 대시보드":
             fig_pie.update_layout(height=320, margin=dict(l=10, r=10, t=30, b=10))
             st.plotly_chart(fig_pie, use_container_width=True)
 
-    # Dashboard Management Expander
     with st.expander("⚡ 대시보드에서 과제 직접 추가 / 삭제 / 예산·책임자 수정하기", expanded=False):
         d_tab1, d_tab2, d_tab3 = st.tabs(["➕ 과제 신규 추가", "🗑️ 과제 삭제", "✏️ 예산 편성표 실시간 수정"])
         
@@ -614,7 +609,7 @@ if st.session_state["menu_selection"] == "📊 통합 대시보드":
                 st.rerun()
 
 # ----------------------------------------------------
-# PAGE 2: 🔍 과제별 상세 관리 (100% Data-Loss Proof & Real-time Sync)
+# PAGE 2: 🔍 과제별 상세 관리 (100% Data-Loss Proof via Unique 'No' Indexing)
 # ----------------------------------------------------
 elif st.session_state["menu_selection"] == "🔍 과제별 상세 관리":
     st.subheader("🔍 과제별 예산 & 지출 상세 관리")
@@ -645,7 +640,6 @@ elif st.session_state["menu_selection"] == "🔍 과제별 상세 관리":
         balance = proj_budget - spent_total
         rate = (spent_total / proj_budget * 100) if proj_budget > 0 else 0.0
         
-        # Summary KPI Cards
         st.markdown(f"### 📌 [{proj_code}] {selected_proj}")
         st.caption(f"**과제 책임자:** {proj_leader if proj_leader else '미지정'} | **비고/메모:** {proj_note if proj_note else '없음'}")
         
@@ -785,20 +779,26 @@ elif st.session_state["menu_selection"] == "🔍 과제별 상세 관리":
                     st.success(f"'{selected_proj}' 과제 [{add_bd_bimok} > {add_bd_bojo_b}] 에 ₩{add_bd_amount:,.0f} 예산이 추가되었습니다!")
                     st.rerun()
 
-        # TAB 2: Expenses Editor for this project (FIXED: 100% Data-Loss Proof via Unique 'No' Tracking)
+        # TAB 2: Expenses Editor for this project (FIXED: Uses 'No' index tracking to prevent any data loss when editing amounts)
         with p_tab2:
             st.markdown(f"##### 📝 '{selected_proj}' 지출 내역 (실시간 수정 & 삭제 가능)")
             st.caption("아래 표에서 직접 금액, 비목, 적요, 지급상태 등을 수정하거나 행을 추가/삭제할 수 있습니다. 수정한 즉시 대시보드에 반영됩니다.")
             
             view_proj_exp = safe_get_columns(proj_exp, ["No", "지출일자", "비목", "보조비목", "보조세목", "지출액", "지출처/적요", "지급상태", "비고"])
             
+            # Set 'No' as index so st.data_editor tracks rows uniquely by No
+            if not view_proj_exp.empty and "No" in view_proj_exp.columns:
+                view_proj_exp_indexed = view_proj_exp.set_index("No")
+            else:
+                view_proj_exp_indexed = view_proj_exp
+                
             bimoks = get_bimok_list()
             c_df = st.session_state["categories"]
             all_bojo_bimoks = c_df["보조비목"].dropna().unique().tolist() if not c_df.empty and "보조비목" in c_df.columns else ["일반수용비"]
             all_bojo_semoks = c_df["보조세목"].dropna().unique().tolist() if not c_df.empty and "보조세목" in c_df.columns else ["일반수용비(3)"]
             
-            edited_proj_exp = st.data_editor(
-                view_proj_exp,
+            edited_indexed = st.data_editor(
+                view_proj_exp_indexed,
                 num_rows="dynamic",
                 use_container_width=True,
                 column_config={
@@ -813,12 +813,12 @@ elif st.session_state["menu_selection"] == "🔍 과제별 상세 관리":
             
             save_clicked_proj = st.button("💾 이 과제 지출 내역 저장", key="btn_save_proj_exp")
             
-            # Robust Sync: Merge by unique 'No' to prevent losing other expenses
-            if not view_proj_exp.equals(edited_proj_exp) or save_clicked_proj:
-                edited_clean_exp = clean_expenses(edited_proj_exp)
+            if not view_proj_exp_indexed.equals(edited_indexed) or save_clicked_proj:
+                edited_reset = edited_indexed.reset_index()
+                edited_clean_exp = clean_expenses(edited_reset)
                 edited_clean_exp["과제/사업단명"] = selected_proj
                 
-                # Ensure unique No for newly added rows in editor
+                # Assign unique No to any newly added rows without valid No
                 main_e = st.session_state["expenses"].copy()
                 max_no = main_e["No"].max() if (not main_e.empty and "No" in main_e.columns) else 0
                 if max_no <= 0:
@@ -829,7 +829,6 @@ elif st.session_state["menu_selection"] == "🔍 과제별 상세 관리":
                         max_no += 1
                         edited_clean_exp.loc[idx, "No"] = max_no
                 
-                # Reconstruct main expenses safely: remove old rows for selected_proj and append edited ones
                 if not main_e.empty and "과제/사업단명" in main_e.columns:
                     cand_main_e = main_e[main_e["과제/사업단명"] != selected_proj]
                 else:
@@ -837,7 +836,6 @@ elif st.session_state["menu_selection"] == "🔍 과제별 상세 관리":
                     
                 cand_main_e = pd.concat([cand_main_e, edited_clean_exp], ignore_index=True)
                 
-                # Validate budget limits
                 is_valid, errs = validate_all_expenses_against_budgets(
                     cand_main_e,
                     st.session_state["budget_projects"],
@@ -847,22 +845,22 @@ elif st.session_state["menu_selection"] == "🔍 과제별 상세 관리":
                 if not is_valid:
                     st.error("🚫 **[지출 초과 오류]** 수정하신 지출 내역이 배정 예산을 초과하여 저장할 수 없습니다!\n\n" + "\n".join(errs))
                 else:
-                    st.session_state["expenses"] = cand_main_e
+                    st.session_state["expenses"] = clean_expenses(cand_main_e)
                     save_and_sync_all()
                     st.success("해당 과제의 지출 내역이 성공적으로 저장 및 자동 연동되었습니다!")
                     st.rerun()
 
-        # TAB 3: Add New Expense for this project (With Budget Limit Validation)
+        # TAB 3: Add New Expense for this project (Strictly using Master Table Categories for Submenus)
         with p_tab3:
-            st.markdown(f"##### ➕ '{selected_proj}' 전용 지출 등록 (예산 잔액 초과 입력 방지 기능 적용)")
+            st.markdown(f"##### ➕ '{selected_proj}' 전용 지출 등록 (예산 잔액 초과 입력 방지 & 기준표 완벽 연동)")
             
-            c_col1, c_col2, c_col3 = st.columns(3)
-            with c_col1:
+            cat_c1, cat_c2, cat_c3 = st.columns(3)
+            with cat_c1:
                 p_bimok = st.selectbox("비목 (대분류)", options=get_bimok_list(), key=f"p_bimok_{selected_proj}")
-            with c_col2:
+            with cat_c2:
                 p_bojo_bimok_opts = get_bojo_bimok_list(p_bimok)
                 p_bojo_bimok = st.selectbox("보조비목 (중분류)", options=p_bojo_bimok_opts, key=f"p_bojo_{selected_proj}")
-            with c_col3:
+            with cat_c3:
                 p_bojo_semok_opts = get_bojo_semok_list(p_bimok, p_bojo_bimok)
                 p_bojo_semok = st.selectbox("보조세목 (소분류)", options=p_bojo_semok_opts, key=f"p_semok_{selected_proj}")
                 
