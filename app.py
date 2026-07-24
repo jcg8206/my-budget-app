@@ -55,14 +55,30 @@ st.markdown("""
 def clean_budget_projects(df):
     if df is None or df.empty:
         return pd.DataFrame(columns=["과제코드", "과제/사업단명", "책임자", "배정예산액", "비고"])
+    
     df = df.copy()
+    expected_cols = ["과제코드", "과제/사업단명", "책임자", "배정예산액", "비고"]
+    
+    for col in expected_cols:
+        if col not in df.columns:
+            df[col] = "" if col != "배정예산액" else 0
+            
     df["과제코드"] = df["과제코드"].fillna("").astype(str).str.strip()
     df["과제/사업단명"] = df["과제/사업단명"].fillna("").astype(str).str.strip()
     df["책임자"] = df["책임자"].fillna("").astype(str).str.strip()
     df["배정예산액"] = pd.to_numeric(df["배정예산액"], errors="coerce").fillna(0).astype(int)
     df["비고"] = df["비고"].fillna("").astype(str).str.strip()
-    df = df[df["과제/사업단명"] != ""].reset_index(drop=True)
-    return df
+    
+    # Keep row if at least one field has input (prevents discarding row while editing leader or notes)
+    has_content = (
+        (df["과제코드"] != "") | 
+        (df["과제/사업단명"] != "") | 
+        (df["책임자"] != "") | 
+        (df["배정예산액"] > 0) | 
+        (df["비고"] != "")
+    )
+    df = df[has_content].reset_index(drop=True)
+    return df[expected_cols]
 
 def clean_categories(df):
     if df is None or df.empty:
@@ -164,13 +180,13 @@ def get_bojo_semok_list(selected_bimok, selected_bojo_bimok):
                 return opts
     return ["일반수용비(3)"]
 
-# Explicit Reusable Column Configurations for Tables
+# Explicit Column Configuration (Guarantees 책임자 and 비고 are editable)
 proj_column_config = {
-    "과제코드": st.column_config.TextColumn("과제코드", help="예: 4-3-12", required=True),
-    "과제/사업단명": st.column_config.TextColumn("과제/사업단명", help="과제 또는 사업단 명칭", required=True),
-    "책임자": st.column_config.TextColumn("책임자", help="과제 책임자 성명", required=False, default=""),
-    "배정예산액": st.column_config.NumberColumn("배정예산액(원)", format="₩%,d", min_value=0, step=100000, default=0),
-    "비고": st.column_config.TextColumn("비고", help="메모 및 비고 사항", required=False, default="")
+    "과제코드": st.column_config.TextColumn("과제코드", help="예: 4-3-12", disabled=False),
+    "과제/사업단명": st.column_config.TextColumn("과제/사업단명", help="과제 또는 사업단 명칭", disabled=False),
+    "책임자": st.column_config.TextColumn("책임자", help="과제 책임자 성명", disabled=False),
+    "배정예산액": st.column_config.NumberColumn("배정예산액(원)", format="₩%,d", min_value=0, step=100000, default=0, disabled=False),
+    "비고": st.column_config.TextColumn("비고", help="메모 및 비고 사항", disabled=False)
 }
 
 # 3. Sidebar Navigation & Global Summary
@@ -263,7 +279,7 @@ if st.session_state["menu_selection"] == "📊 통합 대시보드":
             hide_index=True
         )
         
-        # LINKAGE FEATURE: Quick jump to Project Detail Page
+        # Quick jump to Project Detail Page
         st.markdown("##### 🔍 선택한 과제 상세페이지로 즉시 이동")
         p_list_dash = dash_df["과제/사업단명"].tolist() if not dash_df.empty else []
         if p_list_dash:
@@ -291,12 +307,12 @@ if st.session_state["menu_selection"] == "📊 통합 대시보드":
             fig.update_layout(height=380, margin=dict(l=10, r=10, t=20, b=10))
             st.plotly_chart(fig, use_container_width=True)
 
-    # Dashboard Management Expander (Full Column Config for Leader and Notes)
+    # Dashboard Management Expander
     with st.expander("⚡ 대시보드에서 과제 직접 추가 / 삭제 / 예산·책임자 수정하기", expanded=False):
         d_tab1, d_tab2, d_tab3 = st.tabs(["➕ 과제 신규 추가", "🗑️ 과제 삭제", "✏️ 예산 편성표 실시간 수정"])
         
         with d_tab1:
-            st.markdown("##### 📌 대시보드에서 바로 과제 추가")
+            st.markdown("##### 📌 대시보드에서 바로 과제 추가 (입력 폼)")
             with st.form("dash_add_proj_form", clear_on_submit=True):
                 ca, cb, cc = st.columns(3)
                 with ca:
@@ -310,8 +326,8 @@ if st.session_state["menu_selection"] == "📊 통합 대시보드":
                     
                 sub_d_proj = st.form_submit_button("🚀 과제 등록 완료")
                 if sub_d_proj:
-                    if not d_name or not d_code:
-                        st.error("과제 코드와 과제/사업단명은 필수입니다.")
+                    if not d_name and not d_code:
+                        st.error("과제 코드 또는 과제/사업단명을 입력해주세요.")
                     else:
                         new_p = {
                             "과제코드": d_code,
@@ -349,13 +365,14 @@ if st.session_state["menu_selection"] == "📊 통합 대시보드":
 
         with d_tab3:
             st.markdown("##### ✏️ 예산 편성표 실시간 수정 (책임자/비고/예산/과제명 전체 수정 가능)")
-            st.caption("표 안에서 과제코드, 과제명, 책임자, 배정예산, 비고 칸을 클릭하여 직접 수정하거나 행을 추가/삭제할 수 있습니다.")
+            st.caption("표 안에서 과제코드, 과제명, 책임자, 배정예산, 비고 칸을 클릭하여 직접 수정하거나 하단 + 버튼으로 행을 추가/삭제할 수 있습니다.")
             
             edited_dash_proj = st.data_editor(
                 st.session_state["budget_projects"],
                 num_rows="dynamic",
                 use_container_width=True,
                 column_config=proj_column_config,
+                disabled=False,
                 key="dash_proj_editor"
             )
             if st.button("💾 대시보드 예산 수정사항 저장", key="dash_save_proj_btn"):
@@ -574,8 +591,8 @@ elif st.session_state["menu_selection"] == "💰 예산 편성 및 사업단 관
             submit_proj = st.form_submit_button("🚀 과제 등록 완료")
             
             if submit_proj:
-                if not p_name or not p_code:
-                    st.error("과제 코드와 과제/사업단명은 필수 입력 사항입니다.")
+                if not p_name and not p_code:
+                    st.error("과제 코드 또는 과제/사업단명을 입력해주세요.")
                 else:
                     new_proj = {
                         "과제코드": p_code,
@@ -598,6 +615,7 @@ elif st.session_state["menu_selection"] == "💰 예산 편성 및 사업단 관
             num_rows="dynamic",
             use_container_width=True,
             column_config=proj_column_config,
+            disabled=False,
             key="proj_editor_all"
         )
         
