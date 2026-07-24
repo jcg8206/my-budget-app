@@ -14,7 +14,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom Styling
+# Custom Professional Styling
 st.markdown("""
 <style>
     .main-title {
@@ -69,6 +69,7 @@ def clean_budget_projects(df):
     df["배정예산액"] = pd.to_numeric(df["배정예산액"], errors="coerce").fillna(0).astype(int)
     df["비고"] = df["비고"].fillna("").astype(str).str.strip()
     
+    # Retain rows that have at least one field filled out
     has_content = (
         (df["과제코드"] != "") | 
         (df["과제/사업단명"] != "") | 
@@ -137,7 +138,7 @@ def clean_budget_details(df):
     return df[expected_cols]
 
 def sync_project_budgets_from_details(p_df, bd_df):
-    """Updates project total budget to match category budget sum if category budget allocations exist."""
+    """Sync project total budget with the sum of detailed category budgets if available."""
     p_df = p_df.copy()
     if bd_df.empty:
         return p_df
@@ -154,7 +155,7 @@ def sync_project_budgets_from_details(p_df, bd_df):
             
     return p_df
 
-# Safe Data Loader
+# Data Loader with Auto-Recovery
 def load_data():
     if os.path.exists("budget_projects.csv"):
         p_df = pd.read_csv("budget_projects.csv")
@@ -205,7 +206,6 @@ def save_and_sync_all():
     st.session_state["expenses"] = clean_expenses(st.session_state["expenses"])
     st.session_state["budget_details"] = clean_budget_details(st.session_state["budget_details"])
     
-    # Sync project budget totals with category detail budgets
     st.session_state["budget_projects"] = sync_project_budgets_from_details(
         st.session_state["budget_projects"],
         st.session_state["budget_details"]
@@ -219,7 +219,7 @@ def save_and_sync_all():
     except Exception:
         pass
 
-# Category Dropdown Generators from Categories Master Table
+# Category Dropdown Generators
 def get_bimok_list():
     c_df = st.session_state["categories"]
     if not c_df.empty and "비목" in c_df.columns:
@@ -248,7 +248,7 @@ def get_bojo_semok_list(selected_bimok, selected_bojo_bimok):
                 return opts
     return ["일반수용비(3)"]
 
-# Reusable Column Configs
+# Reusable Column Configurations
 proj_column_config = {
     "과제코드": st.column_config.TextColumn("과제코드", help="예: 4-3-12", disabled=False),
     "과제/사업단명": st.column_config.TextColumn("과제/사업단명", help="과제 또는 사업단 명칭", disabled=False),
@@ -257,7 +257,7 @@ proj_column_config = {
     "비고": st.column_config.TextColumn("비고", help="메모 및 비고 사항", disabled=False)
 }
 
-# 3. Sidebar Navigation & Real-time Global Summary
+# 3. Sidebar Navigation & Global Summary
 with st.sidebar:
     st.image("https://img.icons8.com/color/96/000000/analytics.png", width=50)
     st.markdown("## 🏛️ 예산 & 지출 관리")
@@ -279,7 +279,7 @@ with st.sidebar:
     
     st.divider()
     
-    # Calculate real-time global summary metrics
+    # Real-time Global Summary Metrics
     t_budget = st.session_state["budget_projects"]["배정예산액"].sum() if not st.session_state["budget_projects"].empty else 0
     t_expense = st.session_state["expenses"]["지출액"].sum() if not st.session_state["expenses"].empty else 0
     t_balance = t_budget - t_expense
@@ -296,7 +296,7 @@ st.markdown('<div class="main-title">공모과제 예산 & 지출 통합 관리 
 st.markdown('<div class="sub-title">모든 담당자가 웹에서 실시간으로 예산, 세목별 편성액, 과제별 상세 내역, 지출을 자유롭게 조회하고 수정할 수 있습니다.</div>', unsafe_allow_html=True)
 
 # ----------------------------------------------------
-# PAGE 1: 📊 통합 대시보드 (과제 및 세목별 예산 연동)
+# PAGE 1: 📊 통합 대시보드
 # ----------------------------------------------------
 if st.session_state["menu_selection"] == "📊 통합 대시보드":
     st.subheader("📊 전체 예산 및 과제/세목별 집행 현황")
@@ -349,7 +349,7 @@ if st.session_state["menu_selection"] == "📊 통합 대시보드":
             hide_index=True
         )
         
-        # Quick jump to Project Detail Page
+        # Quick Jump
         st.markdown("##### 🔍 선택한 과제 상세페이지로 즉시 이동")
         p_list_dash = dash_df["과제/사업단명"].tolist() if not dash_df.empty else []
         if p_list_dash:
@@ -377,7 +377,7 @@ if st.session_state["menu_selection"] == "📊 통합 대시보드":
             fig.update_layout(height=380, margin=dict(l=10, r=10, t=20, b=10))
             st.plotly_chart(fig, use_container_width=True)
 
-    # Global Category-Level Budget vs Expense Summary
+    # Global Category-Level Summary
     st.divider()
     st.markdown("#### 🏷️ 전체 비목/보조비목/보조세목별 예산 편성 vs 지출 집행 통합 현황")
     
@@ -498,7 +498,7 @@ if st.session_state["menu_selection"] == "📊 통합 대시보드":
                 st.rerun()
 
 # ----------------------------------------------------
-# PAGE 2: 🔍 과제별 상세 관리 (비목/보조비목/보조세목 예산 입력 & 실시간 연동)
+# PAGE 2: 🔍 과제별 상세 관리 (Error-Free split structure)
 # ----------------------------------------------------
 elif st.session_state["menu_selection"] == "🔍 과제별 상세 관리":
     st.subheader("🔍 과제별 예산 & 지출 상세 관리")
@@ -529,7 +529,7 @@ elif st.session_state["menu_selection"] == "🔍 과제별 상세 관리":
         balance = proj_budget - spent_total
         rate = (spent_total / proj_budget * 100) if proj_budget > 0 else 0.0
         
-        # Summary KPI Cards for Selected Project
+        # Summary KPI Cards
         st.markdown(f"### 📌 [{proj_code}] {selected_proj}")
         st.caption(f"**과제 책임자:** {proj_leader if proj_leader else '미지정'} | **비고/메모:** {proj_note if proj_note else '없음'}")
         
@@ -555,12 +555,12 @@ elif st.session_state["menu_selection"] == "🔍 과제별 상세 관리":
         # TAB 1: Category Level Budget Allocation for this project
         with p_tab1:
             st.markdown(f"##### 📊 '{selected_proj}' 비목 · 보조비목 · 보조세목별 예산 편성 & 집행 현황")
-            st.caption("비목/세목별로 예산 배정액을 설정하세요. 설정한 세목 예산의 총합이 이 과제의 전체 배정 예산으로 자동 합산 연동됩니다.")
+            st.caption("비목/세목별로 예산 배정액을 설정하세요. 세목 예산의 총합이 과제의 전체 예산으로 자동 합산 반영됩니다.")
             
             proj_bd = bd_df[bd_df["과제/사업단명"] == selected_proj].copy() if not bd_df.empty else pd.DataFrame()
             proj_exp_cat_sum = proj_exp.groupby(["비목", "보조비목", "보조세목"])["지출액"].sum().reset_index() if not proj_exp.empty else pd.DataFrame(columns=["비목", "보조비목", "보조세목", "지출액"])
             
-            # Merge category budget and category spent
+            # Read-only Overview Table
             merged_cat_proj = pd.merge(
                 proj_bd[["비목", "보조비목", "보조세목", "배정예산액", "비고"]],
                 proj_exp_cat_sum,
@@ -573,15 +573,32 @@ elif st.session_state["menu_selection"] == "🔍 과제별 상세 관리":
             merged_cat_proj["잔액"] = merged_cat_proj["배정예산액"] - merged_cat_proj["지출액"]
             merged_cat_proj["집행률(%)"] = np.where(merged_cat_proj["배정예산액"] > 0, (merged_cat_proj["지출액"] / merged_cat_proj["배정예산액"] * 100).round(1), 0.0)
             
-            st.markdown("###### ✏️ 비목/세목별 예산 배정액 수정 표")
+            st.markdown("###### 🔍 [조회] 세목별 예산 대비 지출 현황")
+            st.dataframe(
+                merged_cat_proj[["비목", "보조비목", "보조세목", "배정예산액", "지출액", "잔액", "집행률(%)", "비고"]],
+                use_container_width=True,
+                column_config={
+                    "배정예산액": st.column_config.NumberColumn("배정예산액", format="₩%,d"),
+                    "지출액": st.column_config.NumberColumn("지출액", format="₩%,d"),
+                    "잔액": st.column_config.NumberColumn("잔액", format="₩%,d"),
+                    "집행률(%)": st.column_config.NumberColumn("집행률", format="%.1f%%")
+                },
+                hide_index=True
+            )
+            
+            st.divider()
+            st.markdown("###### ✏️ [수정] 비목/세목별 예산 배정액 편집 표")
+            st.caption("아래 표에서 비목, 보조비목, 보조세목, 배정예산액, 비고를 직접 수정하거나 행을 추가/삭제할 수 있습니다.")
             
             bimok_opts = get_bimok_list()
             c_df = st.session_state["categories"]
             all_bojo_bimoks = c_df["보조비목"].dropna().unique().tolist() if not c_df.empty and "보조비목" in c_df.columns else ["일반수용비"]
             all_bojo_semoks = c_df["보조세목"].dropna().unique().tolist() if not c_df.empty and "보조세목" in c_df.columns else ["일반수용비(3)"]
             
+            editable_bd = proj_bd[["비목", "보조비목", "보조세목", "배정예산액", "비고"]].copy() if not proj_bd.empty else pd.DataFrame(columns=["비목", "보조비목", "보조세목", "배정예산액", "비고"])
+            
             edited_bd_proj = st.data_editor(
-                merged_cat_proj[["비목", "보조비목", "보조세목", "배정예산액", "지출액", "잔액", "집행률(%)", "비고"]],
+                editable_bd,
                 num_rows="dynamic",
                 use_container_width=True,
                 column_config={
@@ -589,9 +606,6 @@ elif st.session_state["menu_selection"] == "🔍 과제별 상세 관리":
                     "보조비목": st.column_config.SelectboxColumn("보조비목", options=all_bojo_bimoks),
                     "보조세목": st.column_config.SelectboxColumn("보조세목", options=all_bojo_semoks),
                     "배정예산액": st.column_config.NumberColumn("배정예산액(원)", format="₩%,d", min_value=0, step=100000, default=0),
-                    "지출액": st.column_config.NumberColumn("지출 집행액(원)", format="₩%,d", disabled=True),
-                    "잔액": st.column_config.NumberColumn("잔액(원)", format="₩%,d", disabled=True),
-                    "집행률(%)": st.column_config.NumberColumn("집행률", format="%.1f%%", disabled=True),
                     "비고": st.column_config.TextColumn("비고 메모")
                 },
                 key=f"editor_cat_bd_{selected_proj}"
@@ -605,11 +619,11 @@ elif st.session_state["menu_selection"] == "🔍 과제별 상세 관리":
                 
                 st.session_state["budget_details"] = main_bd
                 save_and_sync_all()
-                st.success(f"'{selected_proj}' 과제의 세목별 예산 편성이 저장되었습니다! (총예산 및 대시보드에 즉시 반영됨)")
+                st.success(f"'{selected_proj}' 과제의 세목별 예산 편성이 성공적으로 저장되었습니다!")
                 st.rerun()
 
             st.divider()
-            st.markdown("###### ➕ 신규 세목 예산 배정 추가 폼")
+            st.markdown("###### ➕ 신규 세목 예산 배정 추가 (입력 폼)")
             cat_c1, cat_c2, cat_c3 = st.columns(3)
             with cat_c1:
                 add_bd_bimok = st.selectbox("비목 (대분류)", options=get_bimok_list(), key=f"add_bd_b_{selected_proj}")
@@ -640,7 +654,7 @@ elif st.session_state["menu_selection"] == "🔍 과제별 상세 관리":
                     }
                     st.session_state["budget_details"] = pd.concat([main_bd, pd.DataFrame([new_bd_row])], ignore_index=True)
                     save_and_sync_all()
-                    st.success(f"'{selected_proj}' 과제 [{add_bd_bimok} > {add_bd_bojo_b}] 에 ₩{add_bd_amount:,.0f} 예산이 배정되었습니다!")
+                    st.success(f"'{selected_proj}' 과제 [{add_bd_bimok} > {add_bd_bojo_b}] 에 ₩{add_bd_amount:,.0f} 예산이 추가되었습니다!")
                     st.rerun()
 
         # TAB 2: Expenses Editor for this project
@@ -671,6 +685,7 @@ elif st.session_state["menu_selection"] == "🔍 과제별 상세 관리":
                 )
                 
                 if st.button("💾 이 과제 지출 내역 저장", key="btn_save_proj_exp"):
+                    edited_proj_exp["과제/사업단명"] = selected_proj
                     main_e = st.session_state["expenses"].copy()
                     main_e = main_e[main_e["과제/사업단명"] != selected_proj]
                     main_e = pd.concat([main_e, edited_proj_exp], ignore_index=True)
@@ -751,6 +766,7 @@ elif st.session_state["menu_selection"] == "🔍 과제별 상세 관리":
                         main_p.loc[idx[0], "비고"] = new_note
                         
                         if new_name != selected_proj:
+                            # Update name in expenses & budget_details
                             main_e = st.session_state["expenses"].copy()
                             main_e.loc[main_e["과제/사업단명"] == selected_proj, "과제/사업단명"] = new_name
                             st.session_state["expenses"] = main_e
