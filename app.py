@@ -68,7 +68,7 @@ def safe_get_columns(df, required_cols, default_values=None):
         default_values = {}
     for col in required_cols:
         if col not in df.columns:
-            def_val = default_values.get(col, "" if col not in ["배정예산액", "지출액", "잔액"] else 0)
+            def_val = default_values.get(col, "" if col not in ["배정예산액", "지출액", "잔액", "No"] else 0)
             df[col] = def_val
     return df[required_cols]
 
@@ -117,7 +117,16 @@ def clean_expenses(df):
     expected_cols = ["No", "지출일자", "과제/사업단명", "비목", "보조비목", "보조세목", "지출액", "지출처/적요", "지급상태", "비고"]
     df = safe_get_columns(df, expected_cols)
     
-    df["No"] = pd.to_numeric(df["No"], errors="coerce").fillna(1).astype(int)
+    df["No"] = pd.to_numeric(df["No"], errors="coerce").fillna(0).astype(int)
+    # Assign sequential No if missing or 0
+    max_existing_no = df["No"].max() if not df.empty else 0
+    if max_existing_no <= 0:
+        max_existing_no = 0
+    for idx, row in df.iterrows():
+        if row["No"] <= 0:
+            max_existing_no += 1
+            df.loc[idx, "No"] = max_existing_no
+
     df["지출일자"] = df["지출일자"].fillna(str(datetime.now().date())).astype(str).str.strip()
     df["과제/사업단명"] = df["과제/사업단명"].fillna("").astype(str).str.strip()
     df["비목"] = df["비목"].fillna("").astype(str).str.strip()
@@ -154,7 +163,6 @@ def clean_budget_details(df):
     return df[expected_cols]
 
 def sync_project_budgets_from_details(p_df, bd_df):
-    """Sync project total budget with the sum of detailed category budgets if available."""
     p_df = p_df.copy()
     if bd_df is None or bd_df.empty:
         return p_df
@@ -176,10 +184,6 @@ def sync_project_budgets_from_details(p_df, bd_df):
 
 # --- Budget Limit Validation Functions ---
 def check_single_expense_budget_limit(proj_name, amount, current_exp_df, current_p_df, current_bd_df, bimok=None, bojo_bimok=None, bojo_semok=None):
-    """
-    Validates if adding `amount` to `proj_name` exceeds project remaining budget or category budget.
-    Returns (is_valid: bool, error_msg: str)
-    """
     p_match = current_p_df[current_p_df["과제/사업단명"] == proj_name]
     if p_match.empty:
         return False, f"'{proj_name}' 과제를 찾을 수 없습니다."
@@ -216,10 +220,6 @@ def check_single_expense_budget_limit(proj_name, amount, current_exp_df, current
     return True, ""
 
 def validate_all_expenses_against_budgets(cand_expenses_df, current_p_df, current_bd_df):
-    """
-    Validates if candidate expenses dataframe causes any project or category to exceed allocated budget.
-    Returns (is_valid: bool, error_list: list)
-    """
     errors = []
     if cand_expenses_df is None or cand_expenses_df.empty:
         return True, []
@@ -227,7 +227,6 @@ def validate_all_expenses_against_budgets(cand_expenses_df, current_p_df, curren
     cand_df = cand_expenses_df.copy()
     cand_df["지출액"] = pd.to_numeric(cand_df["지출액"], errors="coerce").fillna(0).astype(int)
     
-    # 1. Project Level Total Check
     proj_spent = cand_df.groupby("과제/사업단명")["지출액"].sum().reset_index() if "과제/사업단명" in cand_df.columns else pd.DataFrame()
     
     for idx, row in proj_spent.iterrows():
@@ -240,7 +239,6 @@ def validate_all_expenses_against_budgets(cand_expenses_df, current_p_df, curren
                 excess = t_spent - p_budget
                 errors.append(f"• **{p_name}**: 총 배정예산 ₩{p_budget:,.0f} < 총지출 ₩{t_spent:,.0f} (**₩{excess:,.0f} 초과**)")
                 
-    # 2. Category Level Check
     if not current_bd_df.empty and all(c in cand_df.columns for c in ["과제/사업단명", "비목", "보조비목", "보조세목", "지출액"]):
         cat_spent = cand_df.groupby(["과제/사업단명", "비목", "보조비목", "보조세목"])["지출액"].sum().reset_index()
         for idx, row in cat_spent.iterrows():
@@ -311,7 +309,6 @@ if "selected_project_nav" not in st.session_state:
     st.session_state["selected_project_nav"] = p_names[0] if p_names else "선택 가능 과제 없음"
 
 def save_and_sync_all():
-    """Cleans all data, syncs project budgets with category detail budgets, and saves to disk."""
     st.session_state["budget_projects"] = clean_budget_projects(st.session_state["budget_projects"])
     st.session_state["categories"] = clean_categories(st.session_state["categories"])
     st.session_state["expenses"] = clean_expenses(st.session_state["expenses"])
@@ -330,7 +327,7 @@ def save_and_sync_all():
     except Exception:
         pass
 
-# Category Dropdown Generators from Categories Master Table
+# Category Dropdown Generators
 def get_bimok_list():
     c_df = st.session_state["categories"]
     if not c_df.empty and "비목" in c_df.columns:
@@ -368,7 +365,7 @@ proj_column_config = {
     "비고": st.column_config.TextColumn("비고", help="메모 및 비고 사항", disabled=False)
 }
 
-# 3. Sidebar Navigation & Real-time Global Summary
+# 3. Sidebar Navigation & Global Summary
 with st.sidebar:
     st.image("https://img.icons8.com/color/96/000000/analytics.png", width=50)
     st.markdown("## 🏛️ 예산 & 지출 관리")
@@ -390,7 +387,6 @@ with st.sidebar:
     
     st.divider()
     
-    # Real-time Global Summary Metrics
     t_budget = st.session_state["budget_projects"]["배정예산액"].sum() if not st.session_state["budget_projects"].empty else 0
     t_expense = st.session_state["expenses"]["지출액"].sum() if not st.session_state["expenses"].empty else 0
     t_balance = t_budget - t_expense
@@ -618,7 +614,7 @@ if st.session_state["menu_selection"] == "📊 통합 대시보드":
                 st.rerun()
 
 # ----------------------------------------------------
-# PAGE 2: 🔍 과제별 상세 관리 (100% Auto-Sync & Real-time KPI)
+# PAGE 2: 🔍 과제별 상세 관리 (100% Data-Loss Proof & Real-time Sync)
 # ----------------------------------------------------
 elif st.session_state["menu_selection"] == "🔍 과제별 상세 관리":
     st.subheader("🔍 과제별 예산 & 지출 상세 관리")
@@ -686,7 +682,6 @@ elif st.session_state["menu_selection"] == "🔍 과제별 상세 관리":
             
             proj_bd_sub = safe_get_columns(proj_bd, ["비목", "보조비목", "보조세목", "배정예산액", "비고"])
             
-            # Read-only Overview Table
             merged_cat_proj = pd.merge(
                 proj_bd_sub,
                 proj_exp_cat_sum,
@@ -738,7 +733,6 @@ elif st.session_state["menu_selection"] == "🔍 과제별 상세 관리":
                 key=f"editor_cat_bd_{selected_proj}"
             )
             
-            # Auto-sync on table change OR save button click
             if not editable_bd.equals(edited_bd_proj) or st.button("💾 이 과제의 세목별 예산 편성 저장", key="btn_save_proj_bd"):
                 edited_clean = clean_budget_details(edited_bd_proj)
                 edited_clean["과제/사업단명"] = selected_proj
@@ -791,7 +785,7 @@ elif st.session_state["menu_selection"] == "🔍 과제별 상세 관리":
                     st.success(f"'{selected_proj}' 과제 [{add_bd_bimok} > {add_bd_bojo_b}] 에 ₩{add_bd_amount:,.0f} 예산이 추가되었습니다!")
                     st.rerun()
 
-        # TAB 2: Expenses Editor for this project (With Budget Limit Validation & Auto-Sync)
+        # TAB 2: Expenses Editor for this project (FIXED: 100% Data-Loss Proof via Unique 'No' Tracking)
         with p_tab2:
             st.markdown(f"##### 📝 '{selected_proj}' 지출 내역 (실시간 수정 & 삭제 가능)")
             st.caption("아래 표에서 직접 금액, 비목, 적요, 지급상태 등을 수정하거나 행을 추가/삭제할 수 있습니다. 수정한 즉시 대시보드에 반영됩니다.")
@@ -819,12 +813,23 @@ elif st.session_state["menu_selection"] == "🔍 과제별 상세 관리":
             
             save_clicked_proj = st.button("💾 이 과제 지출 내역 저장", key="btn_save_proj_exp")
             
-            # Auto Sync if modified or if save button clicked
+            # Robust Sync: Merge by unique 'No' to prevent losing other expenses
             if not view_proj_exp.equals(edited_proj_exp) or save_clicked_proj:
                 edited_clean_exp = clean_expenses(edited_proj_exp)
                 edited_clean_exp["과제/사업단명"] = selected_proj
                 
+                # Ensure unique No for newly added rows in editor
                 main_e = st.session_state["expenses"].copy()
+                max_no = main_e["No"].max() if (not main_e.empty and "No" in main_e.columns) else 0
+                if max_no <= 0:
+                    max_no = 0
+                    
+                for idx, row in edited_clean_exp.iterrows():
+                    if row["No"] <= 0 or row["No"] in main_e["No"].values and not (proj_exp["No"] == row["No"]).any():
+                        max_no += 1
+                        edited_clean_exp.loc[idx, "No"] = max_no
+                
+                # Reconstruct main expenses safely: remove old rows for selected_proj and append edited ones
                 if not main_e.empty and "과제/사업단명" in main_e.columns:
                     cand_main_e = main_e[main_e["과제/사업단명"] != selected_proj]
                 else:
@@ -1030,52 +1035,19 @@ elif st.session_state["menu_selection"] == "💰 예산 편성 및 사업단 관
                 st.rerun()
 
 # ----------------------------------------------------
-# PAGE 4: 📝 지출 내역 입력 및 수정 (Real-time Budget & Category KPIs)
+# PAGE 4: 📝 지출 내역 입력 및 수정
 # ----------------------------------------------------
 elif st.session_state["menu_selection"] == "📝 지출 내역 입력 및 수정":
     st.subheader("📝 전체 지출 내역 입력 및 통합 관리")
     
-    tab_exp1, tab_exp2 = st.tabs(["➕ 신규 지출 등록 (예산 & 세목 연동)", "✏️ 전체 지출 내역 실시간 에디터"])
+    tab_exp1, tab_exp2 = st.tabs(["➕ 신규 지출 등록 (예산세목기준 연동)", "✏️ 전체 지출 내역 실시간 에디터"])
     
     proj_list = st.session_state["budget_projects"]["과제/사업단명"].tolist() if not st.session_state["budget_projects"].empty else ["선택가능 과제없음"]
     
     with tab_exp1:
-        st.markdown("##### 📥 신규 지출 등록 (실시간 배정액 · 현재 잔액 표시)")
+        st.markdown("##### 📥 신규 지출 등록 (예산 잔액 초과 입력 방지 기능 적용)")
+        st.caption("비목을 선택하면 해당 비목에 속한 보조비목과 보조세목만 드롭다운에 자동으로 표시됩니다.")
         
-        # 1. Project Selection FIRST (Outside Form for Instant Rerun)
-        c_proj_select, c_space = st.columns([2, 1])
-        with c_proj_select:
-            e_proj = st.selectbox("🎯 관련 과제/사업단 선택", proj_list, key="main_input_eproj")
-            
-        p_df = st.session_state["budget_projects"]
-        e_df = st.session_state["expenses"]
-        bd_df = st.session_state["budget_details"]
-        
-        # Calculate selected project's total budget and balance
-        p_match = p_df[p_df["과제/사업단명"] == e_proj] if not p_df.empty else pd.DataFrame()
-        p_budget = int(p_match.iloc[0]["배정예산액"]) if not p_match.empty else 0
-        p_exp = e_df[e_df["과제/사업단명"] == e_proj] if not e_df.empty else pd.DataFrame()
-        p_spent = int(p_exp["지출액"].sum()) if (not p_exp.empty and "지출액" in p_exp.columns) else 0
-        p_balance = p_budget - p_spent
-        p_rate = (p_spent / p_budget * 100) if p_budget > 0 else 0.0
-        
-        # Display Project Budget & Balance Cards
-        st.markdown("###### 💳 선택 과제 총 예산 현황")
-        m1, m2, m3, m4 = st.columns(4)
-        with m1:
-            st.metric("과제 총 배정 예산", f"₩{p_budget:,.0f}")
-        with m2:
-            st.metric("현재 총 지출액", f"₩{p_spent:,.0f}")
-        with m3:
-            st.metric("현재 과제 잔액", f"₩{p_balance:,.0f}")
-        with m4:
-            st.metric("과제 집행률", f"{p_rate:.1f}%")
-            
-        st.progress(min(int(p_rate), 100))
-        st.divider()
-        
-        # 2. Cascading Category Selection (Outside Form for Instant Rerun)
-        st.markdown("###### 🏷️ 예산 세목 선택 (비목 ➔ 보조비목 ➔ 보조세목 연동)")
         cat_c1, cat_c2, cat_c3 = st.columns(3)
         with cat_c1:
             sel_bimok = st.selectbox("비목 (대분류)", options=get_bimok_list(), key="main_sel_bimok")
@@ -1086,43 +1058,17 @@ elif st.session_state["menu_selection"] == "📝 지출 내역 입력 및 수정
             bojo_semok_opts = get_bojo_semok_list(sel_bimok, sel_bojo_bimok)
             sel_bojo_semok = st.selectbox("보조세목 (소분류)", options=bojo_semok_opts, key="main_sel_bojo_semok")
             
-        # Category Level KPI Metrics
-        cat_match = bd_df[
-            (bd_df["과제/사업단명"] == e_proj) &
-            (bd_df["비목"] == sel_bimok) &
-            (bd_df["보조비목"] == sel_bojo_bimok) &
-            (bd_df["보조세목"] == sel_bojo_semok)
-        ] if not bd_df.empty else pd.DataFrame()
-        
-        c_budget = int(cat_match.iloc[0]["배정예산액"]) if not cat_match.empty else 0
-        cat_exp = p_exp[
-            (p_exp["비목"] == sel_bimok) &
-            (p_exp["보조비목"] == sel_bojo_bimok) &
-            (p_exp["보조세목"] == sel_bojo_semok)
-        ] if not p_exp.empty else pd.DataFrame()
-        c_spent = int(cat_exp["지출액"].sum()) if (not cat_exp.empty and "지출액" in cat_exp.columns) else 0
-        c_balance = c_budget - c_spent if c_budget > 0 else p_balance
-        
-        if c_budget > 0:
-            st.info(f"📌 **[{sel_bimok} > {sel_bojo_bimok} > {sel_bojo_semok}] 세목 예산**: 배정액 **₩{c_budget:,.0f}** | 지출액 **₩{c_spent:,.0f}** | **현재 세목 잔액 ₩{c_balance:,.0f}**")
-        else:
-            st.caption(f"ℹ️ 선택 세목의 별도 세목 예산 편성이 없는 경우, 과제 잔액(**₩{p_balance:,.0f}**) 한도 내에서 지출할 수 있습니다.")
-
-        st.divider()
-        
-        # 3. Form for Expense Input Details
-        st.markdown("###### 📝 지출 상세 정보 입력")
         with st.form("add_expense_form_main", clear_on_submit=True):
             col1, col2, col3 = st.columns(3)
             with col1:
                 e_date = st.date_input("지출 일자", datetime.now())
-                e_amount = st.number_input("지출 금액 (원)", min_value=0, step=10000, value=50000)
+                e_proj = st.selectbox("관련 과제/사업단", proj_list)
             with col2:
+                e_amount = st.number_input("지출 금액 (원)", min_value=0, step=10000, value=50000)
                 e_status = st.selectbox("지급 상태", ["지급완료", "결재대기", "보완요청", "지급취소"])
-                e_details = st.text_input("지출처 / 적요 내용", placeholder="예: 5월 실무협의회 회의비 결제")
             with col3:
+                e_details = st.text_input("지출처 / 적요 내용", placeholder="예: 5월 실무협의회 회의비 결제")
                 e_notes = st.text_input("비고 (증빙 구분 등)", placeholder="예: 법인카드 / E나라도움")
-                st.write("") # spacer
                 
             submit_exp = st.form_submit_button("🚀 지출 내역 추가")
             
@@ -1157,12 +1103,12 @@ elif st.session_state["menu_selection"] == "📝 지출 내역 입력 및 수정
                     }
                     st.session_state["expenses"] = pd.concat([main_e, pd.DataFrame([new_exp])], ignore_index=True)
                     save_and_sync_all()
-                    st.success("지출 내역이 성공적으로 입력되었습니다! (예산 및 대시보드 자동 연동 완료)")
+                    st.success("지출 내역이 성공적으로 입력되었습니다!")
                     st.rerun()
 
     with tab_exp2:
-        st.markdown("##### ✏️ 전체 지출 내역 에디터 (실시간 수정 · 삭제 · 자동연동)")
-        st.caption("표 안의 원하는 칸을 더블클릭하여 수정하거나 행을 추가/삭제하세요. 수정한 내용이 즉시 전체 시스템 및 대시보드에 반영됩니다.")
+        st.markdown("##### ✏️ 전체 지출 내역 에디터 (예산 초과 검증 내장)")
+        st.caption("표 안의 원하는 칸을 더블클릭하여 수정할 수 있습니다. 수정을 완료한 후 '지출 내역 변경사항 저장' 버튼을 누르세요.")
         
         col_f1, col_f2 = st.columns(2)
         with col_f1:
@@ -1198,10 +1144,7 @@ elif st.session_state["menu_selection"] == "📝 지출 내역 입력 및 수정
             key="exp_editor_main"
         )
         
-        save_clicked_main = st.button("💾 지출 내역 변경사항 저장", key="btn_save_all_exp")
-        
-        # Auto Sync on modification or button click
-        if not view_exp_df.equals(edited_exp_df) or save_clicked_main:
+        if st.button("💾 지출 내역 변경사항 저장", key="btn_save_all_exp"):
             if not filter_proj and not filter_status:
                 cand_main_e = edited_exp_df
             else:
@@ -1224,9 +1167,9 @@ elif st.session_state["menu_selection"] == "📝 지출 내역 입력 및 수정
             if not is_valid:
                 st.error("🚫 **[지출 초과 오류]** 수정하신 지출 내역이 배정 예산을 초과하여 저장할 수 없습니다!\n\n" + "\n".join(errs))
             else:
-                st.session_state["expenses"] = clean_expenses(cand_main_e)
+                st.session_state["expenses"] = cand_main_e
                 save_and_sync_all()
-                st.success("전체 지출 내역이 성공적으로 업데이트되어 전체 대시보드에 100% 연동되었습니다!")
+                st.success("전체 지출 내역이 성공적으로 업데이트되었습니다!")
                 st.rerun()
 
 # ----------------------------------------------------
