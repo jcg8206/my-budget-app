@@ -272,7 +272,7 @@ def push_file_to_github_api(token, repo, path, content_str, commit_message="Auto
     if not token or not repo:
         return False, "GitHub Token or Repo name is empty."
         
-    url = f"[https://api.github.com/repos/](https://api.github.com/repos/){repo}/contents/{path}"
+    url = f"https://api.github.com/repos/{repo}/contents/{path}"
     headers = {
         "Authorization": f"token {token}",
         "Accept": "application/vnd.github.v3+json",
@@ -452,7 +452,7 @@ proj_column_config = {
 
 # 3. Sidebar Navigation & Global Summary
 with st.sidebar:
-    st.image("[https://img.icons8.com/color/96/000000/analytics.png](https://img.icons8.com/color/96/000000/analytics.png)", width=50)
+    st.image("https://img.icons8.com/color/96/000000/analytics.png", width=50)
     st.markdown("## 🏛️ 예산 & 지출 관리")
     st.caption("공모과제 실시간 통합 관리 시스템")
     st.divider()
@@ -727,6 +727,7 @@ elif st.session_state["menu_selection"] == "🔍 과제별 상세 관리":
         balance = proj_budget - spent_total
         rate = (spent_total / proj_budget * 100) if proj_budget > 0 else 0.0
         
+        # Summary KPI Cards
         st.markdown(f"### 📌 [{proj_code}] {selected_proj}")
         st.caption(f"**과제 책임자:** {proj_leader if proj_leader else '미지정'} | **비고/메모:** {proj_note if proj_note else '없음'}")
         
