@@ -272,7 +272,7 @@ def push_file_to_github_api(token, repo, path, content_str, commit_message="Auto
     if not token or not repo:
         return False, "GitHub Token or Repo name is empty."
         
-    url = f"https://api.github.com/repos/{repo}/contents/{path}"
+    url = f"[https://api.github.com/repos/](https://api.github.com/repos/){repo}/contents/{path}"
     headers = {
         "Authorization": f"token {token}",
         "Accept": "application/vnd.github.v3+json",
@@ -452,7 +452,7 @@ proj_column_config = {
 
 # 3. Sidebar Navigation & Global Summary
 with st.sidebar:
-    st.image("https://img.icons8.com/color/96/000000/analytics.png", width=50)
+    st.image("[https://img.icons8.com/color/96/000000/analytics.png](https://img.icons8.com/color/96/000000/analytics.png)", width=50)
     st.markdown("## 🏛️ 예산 & 지출 관리")
     st.caption("공모과제 실시간 통합 관리 시스템")
     st.divider()
@@ -483,32 +483,6 @@ with st.sidebar:
     st.caption(f"**총 예산 잔액:** ₩{t_balance:,.0f}")
     st.progress(min(int(t_rate), 100))
     st.caption(f"**종합 집행률:** {t_rate:.1f}%")
-
-    st.divider()
-    
-    # GitHub Sync Status Badge
-    has_token = False
-    try:
-        has_token = bool(st.secrets.get("GITHUB_TOKEN") or st.secrets.get("github", {}).get("TOKEN"))
-    except Exception:
-        pass
-        
-    if has_token:
-        st.success("🟢 **깃허브 자동 저장 연동됨**\n수면 모드 후에도 데이터가 100% 영구 보존됩니다.")
-    else:
-        st.warning("⚠️ **깃허브 영구 저장 미설정**\n아래 '깃허브 연동 안내'를 참고해 토큰을 입력하세요.")
-        
-    with st.expander("❓ 깃허브 영구 저장 연동 방법", expanded=False):
-        st.markdown("""
-        **서버 수면 후에도 데이터를 100% 보존하는 방법:**
-        1. [GitHub] Settings ➔ Developer Settings ➔ Personal Access Tokens (Classic) 이동
-        2. `repo` 권한 선택 후 토큰 생성 및 복사
-        3. [Streamlit Cloud] 앱 설정 ➔ **Secrets** 선택 후 입력:
-        ```toml
-        GITHUB_TOKEN = "ghp_xxxx..."
-        GITHUB_REPO = "본인아이디/저장소이름"
-        ```
-        """)
 
 st.markdown('<div class="main-title">공모과제 예산 & 지출 통합 관리 웹 시스템</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-title">모든 담당자가 웹에서 실시간으로 예산, 세목별 편성액, 과제별 상세 내역, 지출을 자유롭게 조회하고 수정할 수 있습니다.</div>', unsafe_allow_html=True)
@@ -840,7 +814,7 @@ elif st.session_state["menu_selection"] == "🔍 과제별 상세 관리":
                 key=f"editor_cat_bd_{selected_proj}"
             )
             
-            if not editable_bd.equals(edited_bd_proj) or st.button("💾 이 과제의 세목별 예산 편성 저장", key="btn_save_proj_bd"):
+            if st.button("💾 이 과제의 세목별 예산 편성 저장", key="btn_save_proj_bd"):
                 edited_clean = clean_budget_details(edited_bd_proj)
                 edited_clean["과제/사업단명"] = selected_proj
                 
@@ -899,6 +873,7 @@ elif st.session_state["menu_selection"] == "🔍 과제별 상세 관리":
             
             view_proj_exp = safe_get_columns(proj_exp, ["No", "지출일자", "비목", "보조비목", "보조세목", "지출액", "지출처/적요", "지급상태", "비고"])
             
+            # Set 'No' as index so st.data_editor tracks rows uniquely by No
             if not view_proj_exp.empty and "No" in view_proj_exp.columns:
                 view_proj_exp_indexed = view_proj_exp.set_index("No")
             else:
@@ -928,6 +903,7 @@ elif st.session_state["menu_selection"] == "🔍 과제별 상세 관리":
                 edited_clean_exp = clean_expenses(edited_reset)
                 edited_clean_exp["과제/사업단명"] = selected_proj
                 
+                # Assign unique No to any newly added rows without valid No
                 main_e = st.session_state["expenses"].copy()
                 max_no = main_e["No"].max() if (not main_e.empty and "No" in main_e.columns) else 0
                 if max_no <= 0:
@@ -959,7 +935,7 @@ elif st.session_state["menu_selection"] == "🔍 과제별 상세 관리":
                     st.success("해당 과제의 지출 내역이 성공적으로 저장 및 자동 연동되었습니다!")
                     st.rerun()
 
-        # TAB 3: Add New Expense for this project
+        # TAB 3: Add New Expense for this project (Strictly using Master Table Categories for Submenus)
         with p_tab3:
             st.markdown(f"##### ➕ '{selected_proj}' 전용 지출 등록 (예산 잔액 초과 입력 방지 & 기준표 완벽 연동)")
             
